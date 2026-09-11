@@ -318,11 +318,34 @@ public partial class MainWindow : Window
 
         try { DragMove(); } catch (InvalidOperationException) { }
     }
+	
+	void MinimizeButton_Click(object sender, RoutedEventArgs e)
+	{
+		var hwnd = WindowHandle;
 
-    void MinimizeButton_Click(object sender, RoutedEventArgs e)
-    {
-        SendSystemCommand(SC_MINIMIZE);
-    }
+		if (hwnd == 0)
+			return;
+
+		var style = GetWindowLongPtr(hwnd, GWL_STYLE);
+
+		// Временно добавляем стандартную рамку Windows,
+		// чтобы DWM применил свою анимацию сворачивания.
+		if ((style & WS_CAPTION) == 0)
+		{
+			SetWindowLongPtr(
+				hwnd,
+				GWL_STYLE,
+				style | WS_CAPTION | WS_THICKFRAME);
+
+			SetWindowPos(
+				hwnd,
+				0,
+				0, 0, 0, 0,
+				SWP_FLAGS);
+		}
+
+		SendSystemCommand(SC_MINIMIZE);
+	}
 
     void CloseButton_Click(object sender, RoutedEventArgs e)
     {
