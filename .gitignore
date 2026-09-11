@@ -1,0 +1,44 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build output
+bin/
+obj/
+
+# Publish output
+publish/
+Publish/
+
+# NuGet
+packages/
+*.nupkg
+*.snupkg
+
+# JetBrains Rider / ReSharper
+.idea/
+_ReSharper*/
+*.[Rr]e[Ss]harper*
+*.DotSettings.user
+
+# VS Code
+.vscode/
+
+# Test results / coverage
+TestResults/
+*.trx
+coverage/
+coverage.opencover.xml
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.log

@@ -1,0 +1,1 @@
+using System.Windows; namespace RResizer { public partial class App:Application{} }
