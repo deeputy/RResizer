@@ -16,7 +16,7 @@
 
 ## Скачать
 
-[**Скачать RResizer для Windows (x64)**](../../releases/download/v1.0.0/RResizer_Setup.exe)
+[**RResizer для Windows (x64)**](../../releases/download/v1.0.0/RResizer_Setup.exe)
 
 ## Требования
 
