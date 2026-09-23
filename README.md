@@ -1,12 +1,12 @@
 # RResizer
 
-Простой пакетный ресайзер изображений для Windows.
+Простой пакетный ресайзер и оптимизатор изображений для Windows.
 
 ![RResizer](screenshots/main-window.png)
 
 ## Возможности
 
-- Пакетное изменение размера изображений
+- Пакетное изменение размеров и оптимизация изображений
 - Сохранение пропорций
 - Готовые пресеты: XS, S, M, HD, FullHD, 2K и 4K
 - Поддержка Drag & Drop
@@ -16,7 +16,7 @@
 
 ## Скачать
 
-[**RResizer для Windows (x64)**](../../releases/download/v1.0.0/RResizer_Setup.exe)
+[**RResizer для Windows (x64)**](../../releases/download/v1.5.0/RResizer_Setup.exe)
 
 ## Требования
 
