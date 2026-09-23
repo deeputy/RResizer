@@ -232,6 +232,9 @@ public partial class MainWindow : Window
                     Interlocked.Add(ref originalBytes, sourceLength);
 
                     using Image<Rgba32> im = Image.Load<Rgba32>(path);
+					
+					im.Mutate(x => x.AutoOrient());
+					
                     int sw=im.Width, sh=im.Height;
                     bool resized = false;
 

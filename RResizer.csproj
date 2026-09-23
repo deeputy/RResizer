@@ -6,7 +6,7 @@
 <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <ApplicationIcon>rresizer.ico</ApplicationIcon>
 </PropertyGroup>
-<ItemGroup><PackageReference Include="SixLabors.ImageSharp" Version="3.1.11"/></ItemGroup>
+<ItemGroup><PackageReference Include="SixLabors.ImageSharp" Version="4.1.2"/></ItemGroup>
 <ItemGroup>
     <Resource Include="rresizer.ico" />
 </ItemGroup>
