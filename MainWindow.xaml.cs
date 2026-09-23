@@ -4,6 +4,7 @@ using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.Formats.Webp;
 using SixLabors.ImageSharp.Processing;
+using SixLabors.ImageSharp.PixelFormats;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -19,13 +20,19 @@ public partial class MainWindow : Window
     readonly SolidColorBrush normal = new(WpfColor.FromRgb(113,128,150));
     readonly SolidColorBrush error = new(WpfColor.FromRgb(217,75,91));
 
+    void HideStatus()
+    {
+        Status.Text = "";
+        Status.Visibility = Visibility.Collapsed;
+    }
+
     private void Author_Click(object sender, MouseButtonEventArgs e)
     {
         try
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
-                FileName = "http://ryabov.bz",
+                FileName = "https://ryabov.bz",
                 UseShellExecute = true
             });
         }
@@ -58,9 +65,17 @@ public partial class MainWindow : Window
     void SizeBoxChanged(object s, System.Windows.Controls.TextChangedEventArgs e)
     {
         Normalize(WidthBox); Normalize(HeightBox);
-        Status.Foreground=normal;
-        bool w=int.TryParse(WidthBox.Text,out _), h=int.TryParse(HeightBox.Text,out _);
-        Status.Text = "или просто нажмите сюда";
+        HideStatus();
+    }
+
+    void ShowError(string message)
+    {
+        Status.Visibility = Visibility.Visible;
+        Status.Foreground = error;
+        Status.FontSize = 17;
+        Status.FontWeight = FontWeights.SemiBold;
+        Status.Margin = new Thickness(0, 18, 0, 0);
+        Status.Text = message;
     }
 
     static void Normalize(System.Windows.Controls.TextBox b)
@@ -97,6 +112,13 @@ public partial class MainWindow : Window
             var p=(b.Tag?.ToString()??"").Split('|');
             WidthBox.Text=p[0]; HeightBox.Text=p[1];
         }
+    }
+
+    void ClearSize_Click(object sender, RoutedEventArgs e)
+    {
+        WidthBox.Clear();
+        HeightBox.Clear();
+        WidthBox.Focus();
     }
 
     void DropClick(object s, MouseButtonEventArgs e)
@@ -165,8 +187,10 @@ public partial class MainWindow : Window
 
     void Choose()
     {
-        if(!int.TryParse(WidthBox.Text,out var w)&&!int.TryParse(HeightBox.Text,out var h)){
-            Status.Foreground=error;Status.Text="Сначала укажи ширину или высоту";WidthBox.Focus();return;
+        bool optimize = OptimizeCheck.IsChecked == true;
+        if(!optimize && !int.TryParse(WidthBox.Text,out var w) && !int.TryParse(HeightBox.Text,out var h))
+        {
+            ShowError("Укажите ширину или высоту"); WidthBox.Focus(); return;
         }
         var d=new OpenFileDialog{Multiselect=true,Filter="Изображения|*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.tif;*.tiff"};
         if(d.ShowDialog()==true)_=Process(d.FileNames);
@@ -176,90 +200,291 @@ public partial class MainWindow : Window
     {
         int tw=int.TryParse(WidthBox.Text,out var w)?w:0;
         int th=int.TryParse(HeightBox.Text,out var h)?h:0;
-        if(tw<=0&&th<=0){Status.Foreground=error;Status.Text="Сначала укажи ширину или высоту";return;}
-        // Читаем состояние CheckBox в UI-потоке. Нельзя обращаться к WPF-контролу
-        // из Task.Run — это вызывает cross-thread exception и валит обработку.
+        bool optimize = OptimizeCheck.IsChecked == true;
+        if(tw<=0&&th<=0&&!optimize){ShowError("Укажите ширину или высоту");return;}
+
+        // Все значения WPF считываем до Task.Run.
         bool noUpscale = NoUpscaleCheck.IsChecked == true;
         bool replaceOriginal = ReplaceOriginalCheck.IsChecked == true;
 
-        Status.Foreground=normal;Status.Text=$"Обрабатываем {files.Length} изображений…";
-        int done=0;var errors=new List<string>();
-        await Task.Run(()=>{
-            foreach(var path in files)try{
-                using var im=Image.Load(path);int sw=im.Width,sh=im.Height;
-                int ow,oh;
-                if(tw>0&&th>0){ow=tw;oh=th;}
-                else if(tw>0){ow=tw;oh=Math.Max(1,(int)Math.Round(sh*(double)tw/sw));}
-                else {oh=th;ow=Math.Max(1,(int)Math.Round(sw*(double)th/sh));}
+        Status.Visibility = Visibility.Visible;
+        Status.Foreground=normal;
+        Status.FontSize = 13;
+        Status.FontWeight = FontWeights.Normal;
+        Status.Margin = new Thickness(0, 18, 0, 0);
+        Status.Text=$"Обрабатываем 1 из {files.Length}…";
+        BatchProgress.Maximum = files.Length;
+        BatchProgress.Value = 0;
+        BatchProgress.Visibility = Visibility.Visible;
 
-                // Не увеличиваем изображение, если оно уже меньше заданного размера.
-                // Для одного параметра достаточно проверить соответствующую сторону;
-                // для двух — только если исходное изображение целиком помещается в W×H.
-                bool fitsTarget = tw>0&&th>0
-                    ? sw<=tw && sh<=th
-                    : tw>0
-                        ? sw<=tw
-                        : sh<=th;
+        int done=0;
+        int processed=0;
+        long originalBytes=0, outputBytes=0;
+        var errors=new List<string>();
 
-                if(!noUpscale || !fitsTarget)
-                {
-                    // Оба размера задаются как ограничивающая область:
-                    // сохраняем исходный aspect ratio и вписываем без обрезки.
-                    im.Mutate(x=>x.Resize(new ResizeOptions
-                    {
-                        Size = new SixLabors.ImageSharp.Size(ow, oh),
-                        Mode = SixLabors.ImageSharp.Processing.ResizeMode.Max,
-                        Sampler = KnownResamplers.Lanczos3
-                    }));
-                }
-                string ext=Path.GetExtension(path).ToLowerInvariant();
-                string outp = replaceOriginal
-                    ? path
-                    : Path.Combine(Path.GetDirectoryName(path)!,Path.GetFileNameWithoutExtension(path)+"_rresized"+ext);
-
-                // При замене оригинала сначала сохраняем во временный файл,
-                // чтобы не потерять исходник, если запись завершится с ошибкой.
-                string savePath = replaceOriginal
-                    ? Path.Combine(Path.GetDirectoryName(path)!, "." + Path.GetFileNameWithoutExtension(path) + "_rresizing_" + Guid.NewGuid().ToString("N") + ext)
-                    : outp;
-
+        await Task.Run(()=>
+        {
+            foreach(var path in files)
+            {
                 try
                 {
-                    switch(ext)
+                    long sourceLength = new FileInfo(path).Length;
+                    Interlocked.Add(ref originalBytes, sourceLength);
+
+                    using Image<Rgba32> im = Image.Load<Rgba32>(path);
+                    int sw=im.Width, sh=im.Height;
+                    bool resized = false;
+
+                    if(tw>0 || th>0)
                     {
-                        case ".jpg":
-                        case ".jpeg":
-                            im.Save(savePath,new JpegEncoder{Quality=95});
-                            break;
-                        case ".png":
-                            im.Save(savePath,new PngEncoder());
-                            break;
-                        case ".webp":
-                            im.Save(savePath,new WebpEncoder{Quality=95});
-                            break;
-                        default:
-                            im.Save(savePath);
-                            break;
+                        int ow,oh;
+                        if(tw>0&&th>0){ow=tw;oh=th;}
+                        else if(tw>0){ow=tw;oh=Math.Max(1,(int)Math.Round(sh*(double)tw/sw));}
+                        else {oh=th;ow=Math.Max(1,(int)Math.Round(sw*(double)th/sh));}
+
+                        bool fitsTarget = tw>0&&th>0
+                            ? sw<=tw && sh<=th
+                            : tw>0
+                                ? sw<=tw
+                                : sh<=th;
+
+                        if(!noUpscale || !fitsTarget)
+                        {
+                            im.Mutate(x=>x.Resize(new ResizeOptions
+                            {
+                                Size = new SixLabors.ImageSharp.Size(ow, oh),
+                                Mode = SixLabors.ImageSharp.Processing.ResizeMode.Max,
+                                Sampler = KnownResamplers.Lanczos3
+                            }));
+                            resized = im.Width != sw || im.Height != sh;
+                        }
                     }
 
-                    if(replaceOriginal)
+                    string ext=Path.GetExtension(path).ToLowerInvariant();
+                    string outp = replaceOriginal
+                        ? path
+                        : Path.Combine(Path.GetDirectoryName(path)!,Path.GetFileNameWithoutExtension(path)+"_rresized"+ext);
+
+                    string savePath = replaceOriginal
+                        ? Path.Combine(Path.GetDirectoryName(path)!, "." + Path.GetFileNameWithoutExtension(path) + "_rresizing_" + Guid.NewGuid().ToString("N") + ext)
+                        : outp;
+
+                    try
                     {
-                        File.Move(savePath, path, true);
+                        if(optimize && (ext==".jpg" || ext==".jpeg" || ext==".webp" || ext==".png"))
+                        {
+                            OptimizeAndSave(im, ext, savePath, path, sourceLength, resized);
+                        }
+                        else
+                        {
+                            switch(ext)
+                            {
+                                case ".jpg":
+                                case ".jpeg":
+                                    im.Save(savePath,new JpegEncoder{Quality=95});
+                                    break;
+                                case ".png":
+                                    im.Save(savePath,new PngEncoder());
+                                    break;
+                                case ".webp":
+                                    im.Save(savePath,new WebpEncoder{Quality=95});
+                                    break;
+                                default:
+                                    im.Save(savePath);
+                                    break;
+                            }
+                        }
+
+                        if(replaceOriginal)
+                            File.Move(savePath, path, true);
+
+                        long finalLength = new FileInfo(replaceOriginal ? path : savePath).Length;
+                        Interlocked.Add(ref outputBytes, finalLength);
                     }
+                    finally
+                    {
+                        if(replaceOriginal && File.Exists(savePath))
+                        {
+                            try { File.Delete(savePath); } catch { }
+                        }
+                    }
+
+                    Interlocked.Increment(ref done);
+                }
+                catch(Exception ex)
+                {
+                    lock(errors) errors.Add($"{Path.GetFileName(path)}: {ex.Message}");
                 }
                 finally
                 {
-                    if(replaceOriginal && File.Exists(savePath))
+                    int current = Interlocked.Increment(ref processed);
+                    Dispatcher.Invoke(() =>
                     {
-                        try { File.Delete(savePath); } catch { }
-                    }
+                        BatchProgress.Value = current;
+                        Status.Visibility = Visibility.Visible;
+                        Status.Foreground = normal;
+                        Status.FontSize = 13;
+                        Status.Margin = new Thickness(0, 18, 0, 0);
+                        Status.FontWeight = FontWeights.Normal;
+                        Status.Text = $"Обрабатываем {current} из {files.Length}…";
+                    });
                 }
-
-                Interlocked.Increment(ref done);
-            }catch(Exception ex){lock(errors)errors.Add(ex.Message);}
+            }
         });
+
+        BatchProgress.Value = files.Length;
+        BatchProgress.Visibility = Visibility.Collapsed;
+        Status.Visibility = Visibility.Visible;
         Status.Foreground=errors.Count==0?new SolidColorBrush(WpfColor.FromRgb(65,135,95)):error;
-        Status.Text=errors.Count==0?$"Готово · {done} из {files.Length}":$"Готово · {done} из {files.Length} · ошибок: {errors.Count}";
+        Status.FontSize = 17;
+        Status.Margin = new Thickness(0, 18, 0, 0);
+        Status.FontWeight = FontWeights.SemiBold;
+        if(errors.Count==0 && optimize && originalBytes>0)
+        {
+            long saved=Math.Max(0,originalBytes-outputBytes);
+            double percent=100.0*saved/originalBytes;
+            Status.Text=replaceOriginal
+                ? $"Готово · {done} из {files.Length} · −{FormatBytes(saved)} ({percent:0.0}%)\nОригинальные файлы заменены"
+                : $"Готово · {done} из {files.Length} · −{FormatBytes(saved)} ({percent:0.0}%)\nНовые файлы сохранены рядом с оригиналами";
+        }
+        else
+        {
+            Status.Text=errors.Count==0
+                ? (replaceOriginal
+                    ? $"Готово · {done} из {files.Length}\nОригинальные файлы заменены"
+                    : $"Готово · {done} из {files.Length}\nНовые файлы сохранены рядом с оригиналами")
+                : $"Готово · {done} из {files.Length} · ошибок: {errors.Count}";
+        }
+    }
+
+    static void OptimizeAndSave(Image<Rgba32> image, string ext, string destination, string originalPath, long sourceLength, bool resized)
+    {
+        // Метаданные камеры/геолокации и служебные профили удаляем перед сохранением.
+        // ICC-профиль цвета намеренно сохраняем.
+        image.Metadata.ExifProfile = null;
+        image.Metadata.IptcProfile = null;
+        image.Metadata.XmpProfile = null;
+
+        string tempDir = Path.Combine(Path.GetTempPath(), "RResizer", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            if(ext==".png")
+            {
+                string candidate = Path.Combine(tempDir, "candidate.png");
+                image.Save(candidate, new PngEncoder
+                {
+                    CompressionLevel = PngCompressionLevel.BestCompression
+                });
+
+                long candidateLength = new FileInfo(candidate).Length;
+                if(resized || candidateLength < sourceLength)
+                    File.Copy(candidate, destination, true);
+                else
+                    File.Copy(originalPath, destination, true);
+                return;
+            }
+
+            bool webp = ext==".webp";
+            string tempExt = webp ? ".webp" : ".jpg";
+            string baseName = Path.Combine(tempDir, "candidate");
+            int[] qualities = webp
+                ? new[] { 92, 88, 84, 80, 76, 72, 68, 64, 60 }
+                : new[] { 94, 90, 86, 82, 78, 74, 70, 66, 62, 58 };
+
+            string? bestPath = null;
+            long bestLength = long.MaxValue;
+
+            foreach(int quality in qualities)
+            {
+                string candidate = baseName + quality + tempExt;
+                if(webp)
+                    image.Save(candidate, new WebpEncoder { Quality=quality });
+                else
+                    image.Save(candidate, new JpegEncoder { Quality=quality });
+
+                long len = new FileInfo(candidate).Length;
+                bool smaller = resized || len < sourceLength;
+                bool acceptable = IsVisuallyClose(image, candidate);
+
+                if(smaller && acceptable && len < bestLength)
+                {
+                    bestLength = len;
+                    bestPath = candidate;
+                }
+            }
+
+            // Если сжатие не даёт приемлемого выигрыша, сохраняем с высоким качеством.
+            if(bestPath == null)
+            {
+                if(resized)
+                {
+                    if(webp)
+                        image.Save(destination, new WebpEncoder { Quality=92 });
+                    else
+                        image.Save(destination, new JpegEncoder { Quality=94 });
+                }
+                else
+                {
+                    File.Copy(originalPath, destination, true);
+                }
+            }
+            else
+            {
+                File.Copy(bestPath, destination, true);
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { }
+        }
+    }
+
+    static bool IsVisuallyClose(Image<Rgba32> source, string candidatePath)
+    {
+        using Image<Rgba32> candidate = Image.Load<Rgba32>(candidatePath);
+        if(candidate.Width != source.Width || candidate.Height != source.Height)
+            return false;
+
+        const int samples = 160;
+        double sumAbs = 0;
+        double sumLumA = 0, sumLumB = 0, sumLumASq = 0, sumLumBSq = 0, sumLumAB = 0;
+        int count = 0;
+
+        int stepX = Math.Max(1, source.Width / samples);
+        int stepY = Math.Max(1, source.Height / samples);
+        for(int y=0; y<source.Height; y+=stepY)
+        for(int x=0; x<source.Width; x+=stepX)
+        {
+            Rgba32 a=source[x,y], b=candidate[x,y];
+            sumAbs += (Math.Abs(a.R-b.R)+Math.Abs(a.G-b.G)+Math.Abs(a.B-b.B))/3.0/255.0;
+
+            double la=0.2126*a.R+0.7152*a.G+0.0722*a.B;
+            double lb=0.2126*b.R+0.7152*b.G+0.0722*b.B;
+            sumLumA+=la; sumLumB+=lb;
+            sumLumASq+=la*la; sumLumBSq+=lb*lb; sumLumAB+=la*lb;
+            count++;
+        }
+
+        double mae=sumAbs/count;
+        double meanA=sumLumA/count, meanB=sumLumB/count;
+        double varA=Math.Max(0,(sumLumASq/count)-meanA*meanA);
+        double varB=Math.Max(0,(sumLumBSq/count)-meanB*meanB);
+        double cov=(sumLumAB/count)-meanA*meanB;
+        const double c1=6.5025, c2=58.5225;
+        double ssim=((2*meanA*meanB+c1)*(2*cov+c2))/((meanA*meanA+meanB*meanB+c1)*(varA+varB+c2));
+
+        // Внутренний критерий: небольшая средняя ошибка цвета + высокая структурная схожесть.
+        return mae <= 0.0125 && ssim >= 0.985;
+    }
+
+    static string FormatBytes(long bytes)
+    {
+        string[] units={"Б","КБ","МБ","ГБ"};
+        double value=bytes;
+        int unit=0;
+        while(value>=1024 && unit<units.Length-1){value/=1024;unit++;}
+        return unit==0?$"{value:0} {units[unit]}":$"{value:0.##} {units[unit]}";
     }
 
     [DllImport("user32.dll", SetLastError = true)]
