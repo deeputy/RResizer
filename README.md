@@ -1,8 +1,8 @@
 # RResizer
 
-Простой пакетный ресайзер и оптимизатор изображений для Windows. 
+Простой пакетный ресайзер и оптимизатор изображений для Windows.
 
-![RResizer](screenshots/main-window.png)
+![RResizer](screenshots/main-window_v1.5.0.png)
 
 ## Возможности
 
